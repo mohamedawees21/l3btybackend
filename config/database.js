@@ -1,4 +1,3 @@
-// backend/config/database.js
 const mysql = require('mysql2/promise');
 require('dotenv').config();
 
@@ -14,7 +13,8 @@ const pool = mysql.createPool({
   connectionLimit: 10,
   queueLimit: 0,
   enableKeepAlive: true,
-  keepAliveInitialDelay: 0
+  keepAliveInitialDelay: 0,
+  ssl: process.env.DB_HOST && process.env.DB_HOST !== 'localhost' ? { rejectUnauthorized: false } : undefined
 });
 
 // اختبار الاتصال
@@ -29,9 +29,6 @@ const pool = mysql.createPool({
     console.log('   1. أن MySQL يعمل');
     console.log('   2. بيانات الاتصال في ملف .env صحيحة');
     console.log('   3. أن قاعدة البيانات موجودة');
-    console.log('');
-    console.log('📌 لإنشاء قاعدة البيانات:');
-    console.log('   mysql -u root -p < database.sql');
     process.exit(1);
   }
 })();
