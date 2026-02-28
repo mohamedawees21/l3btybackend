@@ -49,12 +49,18 @@ const allowedOrigins = [
   process.env.FRONTEND_URL
 ];
 
+// CORS configuration - مهم جداً لـ Vercel
 app.use(cors({
-  origin: true,
-  credentials: true
+  origin: [
+    'https://l3bty.vercel.app',           // فرونتندك على Vercel
+    'https://l3btybackend.vercel.app',     // باكيندك
+    'http://localhost:3000',                // للتطوير المحلي
+    'http://localhost:3001'
+  ],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'X-Requested-With'],
 }));
-
-app.options('*', cors()); 
 
 // Logging (minimal for production)
 if (process.env.NODE_ENV === 'production') {
@@ -340,12 +346,19 @@ app.get('/api/test-db', async (req, res) => {
 });
 
 // ==================== AUTH ENDPOINTS ====================
+// ==================== AUTH ENDPOINTS مع logging مفصل ====================
 app.post('/auth/login', async (req, res) => {
     try {
+        console.log('📝 [LOGIN] Request received:', { 
+            body: req.body,
+            headers: req.headers,
+            time: new Date().toISOString() 
+        });
+        
         const { email, password } = req.body;
         
-        // التحقق من المدخلات
         if (!email || !password) {
+            console.log('❌ [LOGIN] Missing fields');
             return res.status(400).json({ 
                 success: false, 
                 message: 'البريد الإلكتروني وكلمة المرور مطلوبان',
@@ -353,10 +366,23 @@ app.post('/auth/login', async (req, res) => {
             });
         }
 
-        console.log('📧 محاولة تسجيل دخول:', { email, timestamp: new Date().toISOString() });
+        console.log('📧 [LOGIN] Attempt for:', email);
+
+        // Test database connection first
+        try {
+            const dbPool = getDbPool();
+            const testQuery = await dbPool.query('SELECT NOW()');
+            console.log('✅ [LOGIN] Database connected:', testQuery.rows[0].now);
+        } catch (dbError) {
+            console.error('❌ [LOGIN] Database connection failed:', dbError);
+            return res.status(500).json({ 
+                success: false, 
+                message: 'خطأ في اتصال قاعدة البيانات',
+                error: dbError.message 
+            });
+        }
 
         const dbPool = getDbPool();
-        // جلب المستخدم من قاعدة البيانات مع معلومات الفرع
         const result = await dbPool.query(
             `SELECT u.*, b.name as branch_name, b.location as branch_location 
              FROM users u 
@@ -365,9 +391,13 @@ app.post('/auth/login', async (req, res) => {
             [email.toLowerCase().trim()]
         );
 
-        // التحقق من وجود المستخدم
+        console.log('📊 [LOGIN] Query result:', { 
+            found: result.rows.length > 0,
+            rowCount: result.rows.length 
+        });
+
         if (result.rows.length === 0) {
-            console.log('❌ مستخدم غير موجود:', email);
+            console.log('❌ [LOGIN] User not found:', email);
             return res.status(401).json({ 
                 success: false, 
                 message: 'البريد الإلكتروني أو كلمة المرور غير صحيحة',
@@ -376,31 +406,43 @@ app.post('/auth/login', async (req, res) => {
         }
 
         const user = result.rows[0];
+        console.log('👤 [LOGIN] User found:', { 
+            id: user.id, 
+            email: user.email, 
+            role: user.role,
+            hasPasswordHash: !!user.password_hash 
+        });
 
-        // التحقق من كلمة المرور باستخدام bcrypt
+        // التحقق من كلمة المرور
         let isPasswordValid = false;
         
-        // التحقق مما إذا كانت كلمة المرور مشفرة أم لا
         if (user.password_hash && (user.password_hash.startsWith('$2a$') || user.password_hash.startsWith('$2b$'))) {
-            // كلمة مرور مشفرة
-            isPasswordValid = await verifyPassword(password, user.password_hash);
+            try {
+                isPasswordValid = await bcrypt.compare(password, user.password_hash);
+                console.log('🔐 [LOGIN] Password check (hashed):', isPasswordValid);
+            } catch (bcryptError) {
+                console.error('❌ [LOGIN] Bcrypt error:', bcryptError);
+            }
         } else {
-            // كلمة مرور غير مشفرة (نص عادي) - للتوافق مع الإصدارات القديمة
             isPasswordValid = (password === user.password) || (password === '123456');
+            console.log('🔐 [LOGIN] Password check (plain):', isPasswordValid);
             
-            // إذا كانت صحيحة، نقوم بتشفيرها وتحديثها في قاعدة البيانات
             if (isPasswordValid) {
-                const hashedPassword = await hashPassword(password);
-                await dbPool.query(
-                    'UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2',
-                    [hashedPassword, user.id]
-                );
-                console.log('✅ تم تحديث كلمة المرور إلى الصيغة المشفرة للمستخدم:', user.email);
+                try {
+                    const hashedPassword = await bcrypt.hash(password, 10);
+                    await dbPool.query(
+                        'UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2',
+                        [hashedPassword, user.id]
+                    );
+                    console.log('✅ [LOGIN] Password upgraded to hash for:', user.email);
+                } catch (hashError) {
+                    console.error('❌ [LOGIN] Password upgrade failed:', hashError);
+                }
             }
         }
 
         if (!isPasswordValid) {
-            console.log('❌ كلمة مرور غير صحيحة للمستخدم:', email);
+            console.log('❌ [LOGIN] Invalid password for:', email);
             return res.status(401).json({ 
                 success: false, 
                 message: 'البريد الإلكتروني أو كلمة المرور غير صحيحة',
@@ -410,6 +452,7 @@ app.post('/auth/login', async (req, res) => {
 
         // توليد توكن جديد
         const token = generateToken(user.id);
+        console.log('🔑 [LOGIN] Token generated for user:', user.id);
 
         // تحديث آخر تسجيل دخول
         await dbPool.query(
@@ -417,7 +460,6 @@ app.post('/auth/login', async (req, res) => {
             [user.id]
         );
 
-        // تجهيز بيانات المستخدم للإرجاع (بدون معلومات حساسة)
         const userResponse = {
             id: user.id,
             username: user.username || user.email.split('@')[0],
@@ -432,15 +474,8 @@ app.post('/auth/login', async (req, res) => {
             last_login: new Date().toISOString()
         };
 
-        // تسجيل نجاح عملية الدخول
-        console.log('✅ تسجيل دخول ناجح:', {
-            email: user.email,
-            role: user.role,
-            branch_id: user.branch_id,
-            timestamp: new Date().toISOString()
-        });
+        console.log('✅ [LOGIN] Success for:', user.email);
 
-        // إرجاع الاستجابة
         res.json({ 
             success: true, 
             message: 'تم تسجيل الدخول بنجاح',
@@ -456,18 +491,46 @@ app.post('/auth/login', async (req, res) => {
         });
 
     } catch (error) {
-        console.error('🔥 خطأ في تسجيل الدخول:', {
+        console.error('🔥🔥🔥 [LOGIN] Fatal error:', {
             message: error.message,
             stack: error.stack,
-            timestamp: new Date().toISOString()
+            code: error.code,
+            detail: error.detail
         });
         
         res.status(500).json({ 
             success: false, 
             message: 'حدث خطأ في الخادم',
-            code: 'SERVER_ERROR'
+            code: 'SERVER_ERROR',
+            error: process.env.NODE_ENV === 'development' ? error.message : undefined
         });
     }
+});
+
+// ==================== Test database endpoint ====================
+app.get('/test-db', async (req, res) => {
+  try {
+    console.log('🔍 [TEST-DB] Testing database connection...');
+    
+    const dbPool = getDbPool();
+    const result = await dbPool.query('SELECT NOW() as time, version() as version');
+    
+    console.log('✅ [TEST-DB] Database connected:', result.rows[0].time);
+    
+    res.json({
+      success: true,
+      message: '✅ Database connection successful',
+      time: result.rows[0].time,
+      version: result.rows[0].version.split(' ')[0]
+    });
+  } catch (error) {
+    console.error('❌ [TEST-DB] Database connection failed:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Database connection failed',
+      error: error.message
+    });
+  }
 });
 
 app.get('/auth/profile', authenticateToken, (req, res) => {
