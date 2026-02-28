@@ -24,7 +24,6 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // ==================== SERVING STATIC FILES ====================
-// ✅ هذا الكود يجب أن يكون هنا - بعد middleware وقبل أي routes
 const fs = require('fs');
 
 // إنشاء مجلد الصور إذا مش موجود
@@ -169,8 +168,13 @@ app.get('/api/test-db', async (req, res) => {
   }
 });
 
+
+app.get("/", (req, res) => {
+  res.json({ success: true, message: "Backend is running 🚀" });
+});
+
+
 // ==================== AUTH ENDPOINTS ====================
-// ==================== ENDPOINT تسجيل الدخول المحسن ====================
 app.post('/api/auth/login', async (req, res) => {
     try {
         const { email, password } = req.body;
