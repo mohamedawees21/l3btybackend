@@ -14,10 +14,13 @@ const app = express();
 // ==================== MIDDLEWARE ====================
 app.use(helmet());
 app.use(cors({
-  origin: ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:5173'],
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'Accept']
+  origin: [
+    'http://localhost:3000',
+    'http://localhost:3001',
+    'http://localhost:5173',
+    'https://l3bty-frontend-foksenw35-mohamedawees21s-projects.vercel.app'
+  ],
+  credentials: true
 }));
 app.use(morgan('dev'));
 app.use(express.json({ limit: '10mb' }));
@@ -145,7 +148,7 @@ const requireSameBranch = (req, res, next) => {
 };
 
 // ==================== HEALTH & TEST ENDPOINTS ====================
-app.get('/api/health', async (req, res) => {
+app.get('/health', async (req, res) => {
   try {
     await pool.query('SELECT 1');
     res.json({ success: true, status: 'healthy', database: 'connected', timestamp: new Date().toISOString() });
@@ -154,11 +157,11 @@ app.get('/api/health', async (req, res) => {
   }
 });
 
-app.get('/api/test', (req, res) => {
+app.get('/test', (req, res) => {
   res.json({ success: true, message: '✅ الخادم يعمل بشكل صحيح!', timestamp: new Date().toISOString() });
 });
 
-app.get('/api/test-db', async (req, res) => {
+app.get('/test-db', async (req, res) => {
   try {
     const result = await pool.query('SELECT NOW() as time');
     res.json({ success: true, message: 'اتصال قاعدة البيانات ناجح', time: result.rows[0].time });
