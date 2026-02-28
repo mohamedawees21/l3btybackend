@@ -50,21 +50,8 @@ const allowedOrigins = [
 ];
 
 app.use(cors({
-  origin: function (origin, callback) {
-    if (!origin) return callback(null, true);
-
-    const allowed = process.env.FRONTEND_URL;
-
-    if (origin === allowed) {
-      return callback(null, true);
-    }
-
-    console.log("❌ Blocked by CORS:", origin);
-    return callback(null, false);
-  },
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  origin: true,
+  credentials: true
 }));
 
 // Logging (minimal for production)
