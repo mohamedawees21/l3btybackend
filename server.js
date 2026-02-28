@@ -173,7 +173,6 @@ app.get("/", (req, res) => {
   res.json({ success: true, message: "Backend is running 🚀" });
 });
 
-
 // ==================== AUTH ENDPOINTS ====================
 app.post('/api/auth/login', async (req, res) => {
     try {
