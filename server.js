@@ -51,14 +51,23 @@ const allowedOrigins = [
 
 app.use(cors({
   origin: function (origin, callback) {
-    if (!origin) return callback(null, true); // يسمح بالطلبات من السيرفر نفسه
-    if (allowedOrigins.includes(origin)) {
+    // السماح بدون origin (Postman / نفس السيرفر)
+    if (!origin) return callback(null, true);
+
+    // تنظيف الرابط من /
+    const normalizedOrigin = origin.replace(/\/$/, '');
+    const normalizedAllowed = allowedOrigins.map(o => o?.replace(/\/$/, ''));
+
+    if (normalizedAllowed.includes(normalizedOrigin)) {
       return callback(null, true);
-    } else {
-      return callback(new Error('Not allowed by CORS'));
     }
+
+    console.log('❌ Blocked by CORS:', origin);
+    return callback(null, false);
   },
-  credentials: true
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
 // Logging (minimal for production)
