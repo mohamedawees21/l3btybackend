@@ -54,6 +54,8 @@ app.use(cors({
   credentials: true
 }));
 
+app.options('*', cors()); 
+
 // Logging (minimal for production)
 if (process.env.NODE_ENV === 'production') {
   app.use(morgan('combined', { skip: (req, res) => res.statusCode < 400 }));
