@@ -1,21 +1,15 @@
 const { Pool } = require('pg');
+require('dotenv').config();
 
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
+  host: process.env.DB_HOST,
+  port: Number(process.env.DB_PORT),
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  database: process.env.DB_NAME,
   ssl: {
     rejectUnauthorized: false
   }
 });
-
-// اختبار الاتصال مرة واحدة عند التشغيل
-(async () => {
-  try {
-    const client = await pool.connect();
-    console.log('✅ Database Connected Successfully');
-    client.release();
-  } catch (err) {
-    console.error('❌ Database Connection Error:', err.message);
-  }
-})();
 
 module.exports = pool;
