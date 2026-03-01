@@ -13,138 +13,61 @@ require('dotenv').config();
 // ==================== APP INITIALIZATION ====================
 const app = express();
 
-// ==================== DATABASE CONNECTION (Vercel Optimized with SSL fix) ====================
-let pool = null;
-
-const getDbPool = () => {
-  if (!pool) {
-    const sslConfig = process.env.NODE_ENV === 'production' 
-      ? { 
-          rejectUnauthorized: false,  // ✅ هذا يحل مشكلة الشهادة الذاتية
-          ca: '',                      // يمكن تركها فارغة
-          key: '',
-          cert: ''
-        }
-      : false;  // للتطوير المحلي
-
-    console.log('🔌 Creating new database pool with SSL:', process.env.NODE_ENV === 'production' ? 'enabled (rejectUnauthorized: false)' : 'disabled');
-
-    pool = new Pool({
-      connectionString: process.env.DATABASE_URL,
-      ssl: sslConfig,
-      max: 5,  // Vercel Serverless limit
-      idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 10000,  // زيادة المهلة
-    });
-
-    // Handle pool errors
-    pool.on('error', (err) => {
-      console.error('Unexpected database pool error:', err);
-    });
-
-    // Test connection immediately
-    pool.connect((err, client, release) => {
-      if (err) {
-        console.error('❌ Initial database connection failed:', err.message);
-      } else {
-        console.log('✅ Initial database connection successful');
-        release();
-      }
-    });
-  }
-  return pool;
-};
-
-// ==================== MIDDLEWARE ====================
-// Security middleware
+// ==================== SECURITY ====================
 app.use(helmet({
-  contentSecurityPolicy: false, // مفتوح للتطوير، يمكن تفعيله للإنتاج
+  contentSecurityPolicy: false
 }));
 
-const allowedOrigins = [
-  'http://localhost:3000',
-  'http://localhost:3001',
-  'http://localhost:5173',
-  process.env.FRONTEND_URL
-];
-
-// ==================== CORS ====================
+// ==================== CORS (FINAL CLEAN VERSION) ====================
 app.use(cors({
-  origin: true, // يسمح لأي origin (حل مضمون للـ Vercel)
-  credentials: true,
-  methods: ['GET','POST','PUT','DELETE','OPTIONS'],
-  allowedHeaders: ['Content-Type','Authorization']
+  origin: '*', // مؤقتًا لحل مشكلة CORS نهائيًا
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true
 }));
 
-// مهم جدًا للـ preflight
+// دعم preflight requests
 app.options('*', cors());
 
-// Logging (minimal for production)
+// ==================== LOGGING ====================
 if (process.env.NODE_ENV === 'production') {
   app.use(morgan('combined', { skip: (req, res) => res.statusCode < 400 }));
 } else {
   app.use(morgan('dev'));
 }
 
-// Body parsing
+// ==================== BODY PARSING ====================
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Trust proxy (for Vercel)
+// ==================== TRUST PROXY (FOR VERCEL) ====================
 app.set('trust proxy', 1);
 
+// ==================== DATABASE CONNECTION ====================
+let pool = null;
 
+const getDbPool = () => {
+  if (!pool) {
+    const sslConfig =
+      process.env.NODE_ENV === 'production'
+        ? { rejectUnauthorized: false }
+        : false;
 
-// ==================== CORS ====================
-// حل شامل لمشكلة CORS
-app.use((req, res, next) => {
-  // السماح لجميع origins في التطوير
-  const allowedOrigins = [
-    'http://localhost:3000',
-    'http://localhost:3001',
-    'http://localhost:5173',
-    'http://localhost:5000',
-    'https://l3bty.vercel.app',
-    'https://l3bty.com'
-  ];
+    pool = new Pool({
+      connectionString: process.env.DATABASE_URL,
+      ssl: sslConfig,
+      max: 5,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 10000,
+    });
 
-  const origin = req.headers.origin;
-  
-  // إذا كان الـ origin موجود في القائمة أو في التطوير
-  if (process.env.NODE_ENV === 'development' || allowedOrigins.includes(origin)) {
-    res.setHeader('Access-Control-Allow-Origin', origin || '*');
-  } else {
-    res.setHeader('Access-Control-Allow-Origin', '*');
+    pool.on('error', (err) => {
+      console.error('Unexpected database pool error:', err);
+    });
   }
 
-  // السماح بالـ credentials
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
-  
-  // السماح بالـ methods
-  res.setHeader('Access-Control-Allow-Methods', 'GET,HEAD,OPTIONS,POST,PUT,DELETE');
-  
-  // السماح بالـ headers
-  res.setHeader('Access-Control-Allow-Headers', 
-    'Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Auth-Token'
-  );
-
-  // السماح بإظهار هذه headers
-  res.setHeader('Access-Control-Expose-Headers', 
-    'Content-Range, X-Content-Range, Authorization'
-  );
-
-  // معالجة طلبات OPTIONS (preflight)
-  if (req.method === 'OPTIONS') {
-    console.log('📡 Preflight request from:', origin);
-    return res.status(200).end();
-  }
-
-  next();
-});
-
-// إضافة middleware لمعالجة JSON
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+  return pool;
+};
 
 // ==================== SERVING STATIC FILES ====================
 if (process.env.NODE_ENV !== 'production') {
