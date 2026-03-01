@@ -93,6 +93,59 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 // Trust proxy (for Vercel)
 app.set('trust proxy', 1);
 
+
+
+// ==================== CORS ====================
+// حل شامل لمشكلة CORS
+app.use((req, res, next) => {
+  // السماح لجميع origins في التطوير
+  const allowedOrigins = [
+    'http://localhost:3000',
+    'http://localhost:3001',
+    'http://localhost:5173',
+    'http://localhost:5000',
+    'https://l3bty.vercel.app',
+    'https://l3bty.com'
+  ];
+
+  const origin = req.headers.origin;
+  
+  // إذا كان الـ origin موجود في القائمة أو في التطوير
+  if (process.env.NODE_ENV === 'development' || allowedOrigins.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin || '*');
+  } else {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+  }
+
+  // السماح بالـ credentials
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  
+  // السماح بالـ methods
+  res.setHeader('Access-Control-Allow-Methods', 'GET,HEAD,OPTIONS,POST,PUT,DELETE');
+  
+  // السماح بالـ headers
+  res.setHeader('Access-Control-Allow-Headers', 
+    'Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Auth-Token'
+  );
+
+  // السماح بإظهار هذه headers
+  res.setHeader('Access-Control-Expose-Headers', 
+    'Content-Range, X-Content-Range, Authorization'
+  );
+
+  // معالجة طلبات OPTIONS (preflight)
+  if (req.method === 'OPTIONS') {
+    console.log('📡 Preflight request from:', origin);
+    return res.status(200).end();
+  }
+
+  next();
+});
+
+// إضافة middleware لمعالجة JSON
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
 // ==================== SERVING STATIC FILES ====================
 if (process.env.NODE_ENV !== 'production') {
   const publicDir = path.join(__dirname, 'public');
