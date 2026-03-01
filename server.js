@@ -13,24 +13,43 @@ require('dotenv').config();
 // ==================== APP INITIALIZATION ====================
 const app = express();
 
-// ==================== DATABASE CONNECTION (Vercel Optimized) ====================
+// ==================== DATABASE CONNECTION (Vercel Optimized with SSL fix) ====================
 let pool = null;
 
 const getDbPool = () => {
   if (!pool) {
+    const sslConfig = process.env.NODE_ENV === 'production' 
+      ? { 
+          rejectUnauthorized: false,  // ✅ هذا يحل مشكلة الشهادة الذاتية
+          ca: '',                      // يمكن تركها فارغة
+          key: '',
+          cert: ''
+        }
+      : false;  // للتطوير المحلي
+
+    console.log('🔌 Creating new database pool with SSL:', process.env.NODE_ENV === 'production' ? 'enabled (rejectUnauthorized: false)' : 'disabled');
+
     pool = new Pool({
       connectionString: process.env.DATABASE_URL,
-      ssl: process.env.NODE_ENV === 'production' 
-        ? { rejectUnauthorized: false }  // لـ Supabase في الإنتاج
-        : false,  // للتطوير المحلي
+      ssl: sslConfig,
       max: 5,  // Vercel Serverless limit
       idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 5000,
+      connectionTimeoutMillis: 10000,  // زيادة المهلة
     });
 
     // Handle pool errors
     pool.on('error', (err) => {
       console.error('Unexpected database pool error:', err);
+    });
+
+    // Test connection immediately
+    pool.connect((err, client, release) => {
+      if (err) {
+        console.error('❌ Initial database connection failed:', err.message);
+      } else {
+        console.log('✅ Initial database connection successful');
+        release();
+      }
     });
   }
   return pool;
@@ -49,17 +68,27 @@ const allowedOrigins = [
   process.env.FRONTEND_URL
 ];
 
-// CORS configuration - مهم جداً لـ Vercel
 app.use(cors({
-  origin: [
-    'https://l3bty.vercel.app',           // فرونتندك على Vercel
-    'https://l3btybackend.vercel.app',     // باكيندك
-    'http://localhost:3000',                // للتطوير المحلي
-    'http://localhost:3001'
-  ],
+  origin: function (origin, callback) {
+    const allowedOrigins = [
+      'http://localhost:3000',
+      'http://localhost:3001',
+      'http://localhost:5173',
+      'https://l3btybackend-1pxfvnunm-l3btystore-projects.vercel.app'
+    ];
+
+    // يسمح بالطلبات بدون origin (زي Postman)
+    if (!origin) return callback(null, true);
+
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    } else {
+      return callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'X-Requested-With'],
+  methods: ['GET','POST','PUT','DELETE','OPTIONS'],
+  allowedHeaders: ['Content-Type','Authorization','Accept','X-Requested-With'],
 }));
 
 // Logging (minimal for production)
@@ -77,7 +106,6 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.set('trust proxy', 1);
 
 // ==================== SERVING STATIC FILES ====================
-// إنشاء مجلد الصور إذا مش موجود (للتطوير المحلي)
 if (process.env.NODE_ENV !== 'production') {
   const publicDir = path.join(__dirname, 'public');
   const imagesDir = path.join(publicDir, 'images');
@@ -91,7 +119,6 @@ if (process.env.NODE_ENV !== 'production') {
 }
 
 // ✅ خدمة الصور - مهمة للـ static files
-app.use('/images', express.static(path.join(__dirname, 'public/images')));
 app.use('/employee', express.static(path.join(__dirname, 'public/images'))); // للتوافق
 
 console.log('🖼️ تم إعداد خدمة الصور في المسارات: /images و /employee');
@@ -275,6 +302,75 @@ app.get('/test', (req, res) => {
     message: '✅ Server is working properly!',
     timestamp: new Date().toISOString()
   });
+});
+
+// ==================== DIAGNOSTIC ENDPOINT ====================
+app.get('/diagnostic', async (req, res) => {
+  const diagnostic = {
+    success: true,
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV,
+    database: {
+      configured: !!process.env.DATABASE_URL,
+      url_prefix: process.env.DATABASE_URL ? process.env.DATABASE_URL.substring(0, 20) + '...' : null,
+    },
+    ssl: {
+      mode: process.env.NODE_ENV === 'production' ? 'rejectUnauthorized: false' : 'disabled'
+    },
+    tests: {}
+  };
+
+  // Test 1: Simple query
+  try {
+    const dbPool = getDbPool();
+    const result = await dbPool.query('SELECT NOW() as time');
+    diagnostic.tests.simple_query = {
+      success: true,
+      time: result.rows[0].time
+    };
+  } catch (error) {
+    diagnostic.tests.simple_query = {
+      success: false,
+      error: error.message,
+      code: error.code
+    };
+  }
+
+  // Test 2: Check users table
+  try {
+    const dbPool = getDbPool();
+    const result = await dbPool.query('SELECT COUNT(*) as count FROM users');
+    diagnostic.tests.users_table = {
+      success: true,
+      count: result.rows[0].count
+    };
+  } catch (error) {
+    diagnostic.tests.users_table = {
+      success: false,
+      error: error.message
+    };
+  }
+
+  // Test 3: Try to find test user
+  try {
+    const dbPool = getDbPool();
+    const result = await dbPool.query(
+      'SELECT id, email, role FROM users WHERE email LIKE $1 LIMIT 5',
+      ['%@l3bty.com']
+    );
+    diagnostic.tests.test_users = {
+      success: true,
+      found: result.rows.length,
+      users: result.rows
+    };
+  } catch (error) {
+    diagnostic.tests.test_users = {
+      success: false,
+      error: error.message
+    };
+  }
+
+  res.json(diagnostic);
 });
 
 // Database test endpoint
@@ -507,31 +603,6 @@ app.post('/auth/login', async (req, res) => {
     }
 });
 
-// ==================== Test database endpoint ====================
-app.get('/test-db', async (req, res) => {
-  try {
-    console.log('🔍 [TEST-DB] Testing database connection...');
-    
-    const dbPool = getDbPool();
-    const result = await dbPool.query('SELECT NOW() as time, version() as version');
-    
-    console.log('✅ [TEST-DB] Database connected:', result.rows[0].time);
-    
-    res.json({
-      success: true,
-      message: '✅ Database connection successful',
-      time: result.rows[0].time,
-      version: result.rows[0].version.split(' ')[0]
-    });
-  } catch (error) {
-    console.error('❌ [TEST-DB] Database connection failed:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Database connection failed',
-      error: error.message
-    });
-  }
-});
 
 app.get('/auth/profile', authenticateToken, (req, res) => {
   res.json({ success: true, data: req.user });
