@@ -144,7 +144,7 @@ if (process.env.NODE_ENV !== 'production') {
 }
 
 // ✅ خدمة الصور - مهمة للـ static files
-app.use('/employee', express.static(path.join(__dirname, 'public/images'))); // للتوافق
+app.use('/images', express.static(path.join(__dirname, 'public/images'))); // ✅
 
 console.log('🖼️ تم إعداد خدمة الصور في المسارات: /images و /employee');
 
