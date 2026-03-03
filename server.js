@@ -13,35 +13,96 @@ require('dotenv').config();
 // ==================== APP INITIALIZATION ====================
 const app = express();
 
-// ==================== SECURITY ====================
+// ==================== MIDDLEWARE ORDER - مهم جداً ====================
+
+// 1️⃣ Body Parsing أولاً
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// 2️⃣ CORS Middleware - مباشرة بعد body parser
+app.use((req, res, next) => {
+  // السماح للأصول المحددة
+  const allowedOrigins = [
+    'http://localhost:3000',
+    'http://127.0.0.1:3000',
+    'https://l3bty.vercel.app',
+    'https://l3btybackend.vercel.app'
+  ];
+  
+  const origin = req.headers.origin;
+  
+  // 🔥 الأهم: تحديد الأصل المسموح به بدقة
+  if (allowedOrigins.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  } else if (!origin) {
+    // للطلبات من Postman أو Serverless
+    res.setHeader('Access-Control-Allow-Origin', '*');
+  } else {
+    // لأي أصل آخر - للأمان نسمح به مؤقتاً
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  }
+  
+  // الهيدرات الأساسية
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
+  res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, X-HTTP-Method-Override');
+  res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Type, Authorization');
+  
+  // معالجة طلبات OPTIONS (preflight) بشكل فوري
+  if (req.method === 'OPTIONS') {
+    console.log('📡 OPTIONS request received for:', req.url);
+    return res.status(200).end();
+  }
+  
+  next();
+});
+
+// 3️⃣ Security Middleware
 app.use(helmet({
-  contentSecurityPolicy: false
+  contentSecurityPolicy: false // لإلغاء CSP المؤقتاً
 }));
 
-// ==================== CORS (FINAL CLEAN VERSION) ====================
-app.use(cors({
-  origin: '*', // مؤقتًا لحل مشكلة CORS نهائيًا
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: true
-}));
-
-// دعم preflight requests
-app.options('*', cors());
-
-// ==================== LOGGING ====================
+// 4️⃣ Logging Middleware
 if (process.env.NODE_ENV === 'production') {
   app.use(morgan('combined', { skip: (req, res) => res.statusCode < 400 }));
 } else {
   app.use(morgan('dev'));
 }
 
-// ==================== BODY PARSING ====================
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-
-// ==================== TRUST PROXY (FOR VERCEL) ====================
+// 5️⃣ Trust Proxy (لـ Vercel)
 app.set('trust proxy', 1);
+
+// ==================== TEST CORS ENDPOINT ====================
+app.get('/test-cors', (req, res) => {
+  res.json({
+    success: true,
+    message: '✅ CORS is working!',
+    origin: req.headers.origin || 'no origin',
+    timestamp: new Date().toISOString()
+  });
+});
+
+// ✅ OPTIONS handler لجميع المسارات (للتأكيد)
+app.options('*', (req, res) => {
+  const origin = req.headers.origin;
+  const allowedOrigins = [
+    'http://localhost:3000',
+    'http://127.0.0.1:3000',
+    'https://l3bty.vercel.app',
+    'https://l3btybackend.vercel.app'
+  ];
+  
+  if (allowedOrigins.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  } else {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+  }
+  
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.status(200).end();
+});
 
 // ==================== DATABASE CONNECTION ====================
 let pool = null;
@@ -234,6 +295,21 @@ app.get('/', (req, res) => {
     environment: process.env.NODE_ENV || 'development',
     timestamp: new Date().toISOString()
   });
+});
+
+
+// ==================== TEST CORS ENDPOINT ====================
+app.get('/test-cors', (req, res) => {
+  res.json({
+    success: true,
+    message: 'CORS is working!',
+    origin: req.headers.origin || 'no origin',
+    timestamp: new Date().toISOString()
+  });
+});
+
+app.options('/test-cors', (req, res) => {
+  res.status(200).end();
 });
 
 // Health check endpoint (مهم لـ Vercel)
