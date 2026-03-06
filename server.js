@@ -452,6 +452,165 @@ app.get('/api/health', async (req, res) => {
     });
   }
 });
+// ==================== EARLY END RENTAL ENDPOINT ====================
+app.post('/rentals/:id/early-end', authenticateToken, async (req, res) => {
+  const client = await getDbPool().connect();
+  try {
+    const rentalId = req.params.id;
+    const user = req.user;
+    const { reason, refund_amount, elapsed_minutes } = req.body;
+    
+    await client.query('BEGIN');
+    
+    // التحقق من وجود التأجير وصلاحيات المستخدم
+    const rentalResult = await client.query(
+      `SELECT r.*, ri.game_id 
+       FROM rentals r
+       JOIN rental_items ri ON r.id = ri.rental_id
+       WHERE r.id = $1 AND r.branch_id = $2 AND r.status = 'active'`,
+      [rentalId, user.branch_id]
+    );
+    
+    if (rentalResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ 
+        success: false, 
+        message: 'التأجير غير موجود أو غير نشط' 
+      });
+    }
+    
+    const rental = rentalResult.rows[0];
+    
+    // التأكد من أن الوقت المنقضي أقل من 3 دقائق
+    if (elapsed_minutes >= 3) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ 
+        success: false, 
+        message: 'لا يمكن الإنهاء المبكر بعد مرور 3 دقائق' 
+      });
+    }
+    
+    // تحديث حالة التأجير
+    await client.query(
+      `UPDATE rentals 
+       SET status = 'cancelled', 
+           end_time = NOW(),
+           is_refunded = true,
+           refund_amount = $1,
+           cancellation_reason = $2,
+           updated_at = NOW()
+       WHERE id = $3`,
+      [refund_amount, reason || 'إنهاء مبكر (استرداد كامل)', rentalId]
+    );
+    
+    // تحديث حالة اللعبة إلى متاحة
+    await client.query(
+      "UPDATE games SET status = 'available', updated_at = NOW() WHERE id = $1",
+      [rental.game_id]
+    );
+    
+    await client.query('COMMIT');
+    
+    res.json({
+      success: true,
+      message: 'تم الإنهاء المبكر للتأجير واسترداد المبلغ بالكامل',
+      data: {
+        id: rentalId,
+        refund_amount: refund_amount,
+        elapsed_minutes: elapsed_minutes
+      }
+    });
+    
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('🔥 خطأ في الإنهاء المبكر:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'حدث خطأ في الإنهاء المبكر',
+      error: error.message 
+    });
+  } finally {
+    client.release();
+  }
+});
+
+// إضافة نفس الـ endpoint للمسار المحمي بـ /api (للتوافق)
+app.post('/api/rentals/:id/early-end', authenticateToken, async (req, res) => {
+  const client = await getDbPool().connect();
+  try {
+    const rentalId = req.params.id;
+    const user = req.user;
+    const { reason, refund_amount, elapsed_minutes } = req.body;
+    
+    await client.query('BEGIN');
+    
+    const rentalResult = await client.query(
+      `SELECT r.*, ri.game_id 
+       FROM rentals r
+       JOIN rental_items ri ON r.id = ri.rental_id
+       WHERE r.id = $1 AND r.branch_id = $2 AND r.status = 'active'`,
+      [rentalId, user.branch_id]
+    );
+    
+    if (rentalResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ 
+        success: false, 
+        message: 'التأجير غير موجود أو غير نشط' 
+      });
+    }
+    
+    const rental = rentalResult.rows[0];
+    
+    if (elapsed_minutes >= 3) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ 
+        success: false, 
+        message: 'لا يمكن الإنهاء المبكر بعد مرور 3 دقائق' 
+      });
+    }
+    
+    await client.query(
+      `UPDATE rentals 
+       SET status = 'cancelled', 
+           end_time = NOW(),
+           is_refunded = true,
+           refund_amount = $1,
+           cancellation_reason = $2,
+           updated_at = NOW()
+       WHERE id = $3`,
+      [refund_amount, reason || 'إنهاء مبكر (استرداد كامل)', rentalId]
+    );
+    
+    await client.query(
+      "UPDATE games SET status = 'available', updated_at = NOW() WHERE id = $1",
+      [rental.game_id]
+    );
+    
+    await client.query('COMMIT');
+    
+    res.json({
+      success: true,
+      message: 'تم الإنهاء المبكر للتأجير واسترداد المبلغ بالكامل',
+      data: {
+        id: rentalId,
+        refund_amount: refund_amount,
+        elapsed_minutes: elapsed_minutes
+      }
+    });
+    
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('🔥 خطأ في الإنهاء المبكر:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'حدث خطأ في الإنهاء المبكر',
+      error: error.message 
+    });
+  } finally {
+    client.release();
+  }
+});
 
 app.get('/api/test', (req, res) => {
   res.json({ 
