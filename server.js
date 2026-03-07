@@ -3683,6 +3683,227 @@ app.get('/test-rentals', authenticateToken, async (req,res) => {
   }
 });
 
+// ==================== MODIFY RENTAL ENDPOINT ====================
+app.post('/rentals/:id/modify', authenticateToken, requireBranchManager, async (req, res) => {
+  const client = await getDbPool().connect();
+  try {
+    const rentalId = req.params.id;
+    const user = req.user;
+    const { old_game_id, new_game_id, price_difference } = req.body;
+    
+    await client.query('BEGIN');
+    
+    // التحقق من وجود التأجير وصلاحيات المستخدم
+    const rentalResult = await client.query(
+      `SELECT r.*, ri.id as item_id, ri.game_id as current_game_id
+       FROM rentals r
+       JOIN rental_items ri ON r.id = ri.rental_id
+       WHERE r.id = $1 AND r.branch_id = $2 AND r.status = 'active'`,
+      [rentalId, user.branch_id]
+    );
+    
+    if (rentalResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ 
+        success: false, 
+        message: 'التأجير غير موجود أو غير نشط' 
+      });
+    }
+    
+    const rental = rentalResult.rows[0];
+    
+    // التحقق من وجود اللعبة الجديدة
+    const newGameResult = await client.query(
+      'SELECT id, name, price_per_15min, status FROM games WHERE id = $1',
+      [new_game_id]
+    );
+    
+    if (newGameResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ 
+        success: false, 
+        message: 'اللعبة الجديدة غير موجودة' 
+      });
+    }
+    
+    const newGame = newGameResult.rows[0];
+    
+    // التحقق من أن اللعبة الجديدة متاحة
+    if (newGame.status !== 'available') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ 
+        success: false, 
+        message: 'اللعبة الجديدة غير متاحة حالياً' 
+      });
+    }
+    
+    // تحديث عنصر التأجير باللعبة الجديدة
+    await client.query(
+      `UPDATE rental_items 
+       SET game_id = $1, 
+           game_name = $2,
+           price_per_15min = $3
+       WHERE rental_id = $4`,
+      [new_game_id, newGame.name, newGame.price_per_15min, rentalId]
+    );
+    
+    // تحديث حالة اللعبة القديمة إلى متاحة
+    await client.query(
+      "UPDATE games SET status = 'available', updated_at = NOW() WHERE id = $1",
+      [old_game_id]
+    );
+    
+    // تحديث حالة اللعبة الجديدة إلى مؤجرة
+    await client.query(
+      "UPDATE games SET status = 'rented', updated_at = NOW() WHERE id = $1",
+      [new_game_id]
+    );
+    
+    // تحديث المبلغ الإجمالي للتأجير إذا كان هناك فرق في السعر
+    if (price_difference !== 0) {
+      await client.query(
+        `UPDATE rentals 
+         SET total_amount = total_amount + $1,
+             updated_at = NOW()
+         WHERE id = $2`,
+        [price_difference, rentalId]
+      );
+    }
+    
+    await client.query('COMMIT');
+    
+    res.json({
+      success: true,
+      message: 'تم تعديل التأجير بنجاح',
+      data: {
+        id: rentalId,
+        old_game_id,
+        new_game_id,
+        new_game_name: newGame.name,
+        price_difference
+      }
+    });
+    
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('🔥 خطأ في تعديل التأجير:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'حدث خطأ في تعديل التأجير',
+      error: error.message 
+    });
+  } finally {
+    client.release();
+  }
+});
+
+// Add the same endpoint with /api prefix for compatibility
+app.post('/api/rentals/:id/modify', authenticateToken, requireBranchManager, async (req, res) => {
+  const client = await getDbPool().connect();
+  try {
+    const rentalId = req.params.id;
+    const user = req.user;
+    const { old_game_id, new_game_id, price_difference } = req.body;
+    
+    await client.query('BEGIN');
+    
+    const rentalResult = await client.query(
+      `SELECT r.*, ri.id as item_id, ri.game_id as current_game_id
+       FROM rentals r
+       JOIN rental_items ri ON r.id = ri.rental_id
+       WHERE r.id = $1 AND r.branch_id = $2 AND r.status = 'active'`,
+      [rentalId, user.branch_id]
+    );
+    
+    if (rentalResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ 
+        success: false, 
+        message: 'التأجير غير موجود أو غير نشط' 
+      });
+    }
+    
+    const rental = rentalResult.rows[0];
+    
+    const newGameResult = await client.query(
+      'SELECT id, name, price_per_15min, status FROM games WHERE id = $1',
+      [new_game_id]
+    );
+    
+    if (newGameResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ 
+        success: false, 
+        message: 'اللعبة الجديدة غير موجودة' 
+      });
+    }
+    
+    const newGame = newGameResult.rows[0];
+    
+    if (newGame.status !== 'available') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ 
+        success: false, 
+        message: 'اللعبة الجديدة غير متاحة حالياً' 
+      });
+    }
+    
+    await client.query(
+      `UPDATE rental_items 
+       SET game_id = $1, 
+           game_name = $2,
+           price_per_15min = $3
+       WHERE rental_id = $4`,
+      [new_game_id, newGame.name, newGame.price_per_15min, rentalId]
+    );
+    
+    await client.query(
+      "UPDATE games SET status = 'available', updated_at = NOW() WHERE id = $1",
+      [old_game_id]
+    );
+    
+    await client.query(
+      "UPDATE games SET status = 'rented', updated_at = NOW() WHERE id = $1",
+      [new_game_id]
+    );
+    
+    if (price_difference !== 0) {
+      await client.query(
+        `UPDATE rentals 
+         SET total_amount = total_amount + $1,
+             updated_at = NOW()
+         WHERE id = $2`,
+        [price_difference, rentalId]
+      );
+    }
+    
+    await client.query('COMMIT');
+    
+    res.json({
+      success: true,
+      message: 'تم تعديل التأجير بنجاح',
+      data: {
+        id: rentalId,
+        old_game_id,
+        new_game_id,
+        new_game_name: newGame.name,
+        price_difference
+      }
+    });
+    
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('🔥 خطأ في تعديل التأجير:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'حدث خطأ في تعديل التأجير',
+      error: error.message 
+    });
+  } finally {
+    client.release();
+  }
+});
+
 // في backend - تحديث endpoint جلب التأجيرات المكتملة
 app.get('/rentals/completed', authenticateToken, async (req, res) => {
   try {
