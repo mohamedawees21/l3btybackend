@@ -611,6 +611,66 @@ app.post('/api/rentals/:id/early-end', authenticateToken, async (req, res) => {
     client.release();
   }
 });
+// في ملف backend - إضافة endpoint حذف التأجير
+app.delete('/rentals/:id', authenticateToken, requireBranchManager, async (req, res) => {
+  const client = await getDbPool().connect();
+  try {
+    const rentalId = req.params.id;
+    const user = req.user;
+    
+    await client.query('BEGIN');
+    
+    // التحقق من وجود التأجير
+    const rentalResult = await client.query(
+      `SELECT * FROM rentals WHERE id = $1 AND branch_id = $2`,
+      [rentalId, user.branch_id]
+    );
+    
+    if (rentalResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ 
+        success: false, 
+        message: 'التأجير غير موجود' 
+      });
+    }
+    
+    const rental = rentalResult.rows[0];
+    
+    // التأكد من أن التأجير مكتمل أو ملغي
+    if (rental.status !== 'completed' && rental.status !== 'cancelled') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ 
+        success: false, 
+        message: 'لا يمكن حذف تأجير نشط' 
+      });
+    }
+    
+    // حذف عناصر التأجير أولاً
+    await client.query('DELETE FROM rental_items WHERE rental_id = $1', [rentalId]);
+    
+    // حذف التأجير
+    await client.query('DELETE FROM rentals WHERE id = $1', [rentalId]);
+    
+    await client.query('COMMIT');
+    
+    res.json({
+      success: true,
+      message: 'تم حذف التأجير بنجاح',
+      data: { id: rentalId }
+    });
+    
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('🔥 خطأ في حذف التأجير:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'حدث خطأ في حذف التأجير',
+      error: error.message 
+    });
+  } finally {
+    client.release();
+  }
+});
 
 app.get('/api/test', (req, res) => {
   res.json({ 
@@ -3623,10 +3683,11 @@ app.get('/test-rentals', authenticateToken, async (req,res) => {
   }
 });
 
+// في backend - تحديث endpoint جلب التأجيرات المكتملة
 app.get('/rentals/completed', authenticateToken, async (req, res) => {
   try {
     const user = req.user;
-    const { shift_id, branch_id, start_date, end_date, limit = 100 } = req.query;
+    const { shift_id, branch_id, start_date, end_date, limit = 100, include_refunded } = req.query;
     const targetBranchId = branch_id || user.branch_id;
     const dbPool = getDbPool();
     
@@ -3643,8 +3704,15 @@ app.get('/rentals/completed', authenticateToken, async (req, res) => {
         )) as items
       FROM rentals r
       LEFT JOIN rental_items ri ON r.id = ri.rental_id
-      WHERE r.branch_id = $1 AND r.status = 'completed'
+      WHERE r.branch_id = $1 AND (r.status = 'completed'
     `;
+    
+    // ✅ تضمين الملغاة المستردة إذا طلب ذلك
+    if (include_refunded === 'true') {
+      query += ` OR (r.status = 'cancelled' AND r.is_refunded = true)`;
+    }
+    
+    query += `)`;
     
     const params = [targetBranchId];
     let paramIndex = 2;
@@ -3672,7 +3740,7 @@ app.get('/rentals/completed', authenticateToken, async (req, res) => {
     
     const result = await dbPool.query(query, params);
     
-    res.json({ success: true, data: result.rows, count: result.rows.length, message: `تم جلب ${result.rows.length} تأجير مكتمل` });
+    res.json({ success: true, data: result.rows, count: result.rows.length });
   } catch (error) {
     console.error('🔥 خطأ في جلب التأجيرات المكتملة:', error.message);
     res.status(500).json({ success: false, message: 'حدث خطأ في جلب التأجيرات المكتملة', data: [] });
